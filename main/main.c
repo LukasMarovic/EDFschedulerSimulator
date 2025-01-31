@@ -10,6 +10,7 @@
 #define LED_PIN_2 GPIO_NUM_23
 #define BUTTON_PIN GPIO_NUM_26
 #define MAX_TASKS 5
+#define DELTA_TIME 1000
 
 static uint32_t last_interrupt_time = 0;
 
@@ -42,7 +43,7 @@ void taskFunction(void *pvParameter) {
     int execTimer = 0;
     while (1) {
         ulTaskNotifyTake(pdTRUE, portMAX_DELAY);
-        execTimer += 100;
+        execTimer += DELTA_TIME;
         printf("%dms | Task number %d, execTime = %d\n", timer, task.taskNum, execTimer);
         if (execTimer == task.execTime) {
             execTimer = 0;
@@ -51,8 +52,8 @@ void taskFunction(void *pvParameter) {
     }
 }
 
-EDFtask scheduleNextTask() {
-    int firstDeadline = 1100;
+int scheduleNextTask() {
+    int firstDeadline = 11 * DELTA_TIME;
     int firstTask = -1;
     for (int i = 0; i < n; i++) {
         if (!finished[i]) {
@@ -63,28 +64,24 @@ EDFtask scheduleNextTask() {
             }
         }
     }
-    if (firstTask != -1) {
-        return tasks[firstTask];
-    } else {
-        return (EDFtask) {-1, 0, 0, NULL, 0};
-    }
+    return firstTask;
 }
 
 void EDF_scheduler (void *pvParemeter) {
     int pin;
-    EDFtask currentTask;
+    int currentTask;
     gpio_set_level(LED_PIN_2, 1);
     while (1) {
         if (xQueueReceive(taskQueue, &pin, 10)) {
-            if (n < 5) {
+            if (n < MAX_TASKS) {
                 int randomPeriod = ((esp_random() % 6) + 5);
-                int randomExecTime = (1 + (esp_random() % (randomPeriod)) / 4) * 100;
-                randomPeriod *= 100;
+                int randomExecTime = (1 + (esp_random() % (randomPeriod)) / 4) * DELTA_TIME;
+                randomPeriod *= DELTA_TIME;
                 tasks[n] = (EDFtask) {n+1, randomExecTime, randomPeriod, NULL, timer};
-                xTaskCreate(&taskFunction, "Task", 2048, (void *) &tasks[n], 5, &tasks[n].handle);
+                xTaskCreate(&taskFunction, "Task", 2048, (void *) &tasks[n], 1, &tasks[n].handle);
                 printf("Created task %d: execTime = %d, period = %d\n", n+1, randomExecTime, randomPeriod);
                 n += 1;
-                if (n == 5) {
+                if (n == MAX_TASKS) {
                     gpio_set_level(LED_PIN_2, 0);
                 }
             } else {
@@ -101,13 +98,13 @@ void EDF_scheduler (void *pvParemeter) {
             }
         }
         currentTask = scheduleNextTask();
-        timer += 100;
-        if (currentTask.taskNum != -1) {
-            xTaskNotifyGive(currentTask.handle);
+        timer += DELTA_TIME;
+        if (currentTask != -1) {
+            xTaskNotifyGive(tasks[currentTask].handle);
         } else {
             printf("%dms | \n", timer);
         }
-        vTaskDelay(pdMS_TO_TICKS(1000));
+        vTaskDelay(pdMS_TO_TICKS(DELTA_TIME));
     }
 }
 
@@ -129,5 +126,5 @@ void app_main(void)
     gpio_set_direction(LED_PIN_2, GPIO_MODE_DEF_OUTPUT);
     taskQueue = xQueueCreate(MAX_TASKS, sizeof(EDFtask));
     button_init();
-    xTaskCreate(EDF_scheduler, "EDF scheduler", 2048, NULL, 2, NULL);
+    xTaskCreate(EDF_scheduler, "EDF scheduler", 2048, NULL, configMAX_PRIORITIES-1, NULL);
 }
